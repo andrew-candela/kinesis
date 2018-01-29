@@ -4,11 +4,27 @@ import boto3
 import time
 
 
+def identity(rec):
+    return rec
+
 def sample_batch_processing_function(list_of_records):
     for i in list_of_records:
         i=i.strip()
         i=json.loads(i)
         print i['f1']
+
+word_counts={}
+def word_count_batch(list_of_records):
+    global word_counts
+    for i in list_of_records:
+        i = i.strip()
+        i = json.loads(i)['a']
+        for word in i.split():
+            if word in word_counts:
+                word_counts[word] += 1
+            else:
+                word_counts[word] = 1
+
 
 class KinesisConsumer():
     def __init__(self,stream_name,consumer_name,ddb_table = 'kinesis_counters'):
@@ -134,6 +150,23 @@ class KinesisConsumer():
             if batch_processing_function:
                 batch_processing_function(results['recs'])
 
+    def monitor(self,delay_secs = 1,recs_process = 100,print_level = None,processing_function = identity):
+        results = {'recs':[]}
+        failed_records = []
+        while True:
+            for shard in self.active_shards:
+                resp = self.poll(shard,recs_process)
+                if print_level == 'full':
+                    print resp
+                if resp.get('Records'):
+                    if print_level == 'data':
+                        for r in resp['Records']:
+                            print processing_function(r['Data'])
+                    if print_level == 'count':
+                        print len(resp['Records'])
+                shard['iter'] = resp['NextShardIterator']
+                time.sleep(delay_secs)
+
     def post(self,data,partition_key='1'):
         payload = data
         payload = json.dumps(payload) + '\n'
@@ -142,6 +175,15 @@ class KinesisConsumer():
             Data=payload,
             PartitionKey=partition_key
         )
+        return response
+
+    def batch_post(self,data,partition_key = '1'):
+        records = [{
+            'Data':json.dumps(d),
+            'PartitionKey':partition_key
+            } for d in data
+            ]
+        response = self.ks.put_records(Records = records, StreamName = self.stream['StreamName'])
         return response
 
 # k = KinesisConsumer('my-first-stream','c1')
